@@ -10,6 +10,7 @@ from scipy import stats
 
 import insightface
 from insightface.app.common import Face
+from scripts.reactor_inferencers.hyperswap import HyperSwapper
 
 from scripts.reactor_globals import FACE_MODELS_PATH
 from scripts.reactor_helpers import (
@@ -155,9 +156,36 @@ def getAnalysisModel():
 def getFaceSwapModel(model_path: str):
     global FS_MODEL
     global CURRENT_FS_MODEL_PATH
-    if CURRENT_FS_MODEL_PATH is None or CURRENT_FS_MODEL_PATH != model_path:
+
+    if (
+        CURRENT_FS_MODEL_PATH is None
+        or CURRENT_FS_MODEL_PATH != model_path
+    ):
         CURRENT_FS_MODEL_PATH = model_path
-        FS_MODEL = insightface.model_zoo.get_model(model_path, providers=PROVIDERS)
+
+        model_filename = os.path.basename(
+            model_path
+        ).lower()
+
+        if "hyperswap" in model_filename:
+            logger.status(
+                f"Loading HyperSwap: {model_filename}"
+            )
+
+            FS_MODEL = HyperSwapper(
+                model_path,
+                providers=PROVIDERS
+            )
+
+        else:
+            logger.status(
+                f"Loading InsightFace swapper: {model_filename}"
+            )
+
+            FS_MODEL = insightface.model_zoo.get_model(
+                model_path,
+                providers=PROVIDERS
+            )
 
     return FS_MODEL
 

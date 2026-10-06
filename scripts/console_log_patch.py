@@ -40,6 +40,11 @@ def patched_get_model(self, **kwargs):
 
 def patched_faceanalysis_init(self, name=DEFAULT_MP_NAME, root='~/.insightface', allowed_modules=None, **kwargs):
     onnxruntime.set_default_logger_severity(3)
+    # InsightFace 2.x FaceAnalysis.get() always reads self.addons. This init is
+    # the 0.7 loader, which never created that attribute, so the first swap
+    # died with AttributeError before any face was detected.
+    self.addons = {}
+    self.liveness_mode = kwargs.get("liveness_mode", "normal")
     self.models = {}
     self.model_dir = ensure_available('models', name, root=root)
     onnx_files = glob.glob(osp.join(self.model_dir, '*.onnx'))

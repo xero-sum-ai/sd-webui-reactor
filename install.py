@@ -46,9 +46,21 @@ def is_installed (
         else:
             return False
     except Exception as e:
+        # A missing package is the normal "please install it" case.
+        # VersionConflict is raised when the argument is a requirement
+        # string such as "insightface==0.7.3" and another version is present.
+        if type(e).__name__ in ("DistributionNotFound", "VersionConflict"):
+            return False
         print(f"Error: {e}")
         return False
     
+def requirement_name(spec: str) -> str:
+    spec = spec.strip()
+    for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+        if sep in spec:
+            return spec.split(sep, 1)[0].strip()
+    return spec
+
 def download(url, path):
     request = urllib.request.urlopen(url)
     total = int(request.headers.get('Content-Length', 0))
@@ -104,15 +116,26 @@ with open(req_file) as file:
         with open(os.path.join(BASE_PATH, "last_device.txt"), "w") as txt:
             txt.write(last_device)
         if cuda_version is not None:
-            if float(cuda_version)>=12: # CU12.x
-                extra_index_url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
-            else: # CU11.8
-                extra_index_url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple"
-            if not is_installed(ort,"1.17.1",True):
-                install_count += 1
-                ort = "onnxruntime-gpu==1.17.1"
-                pip_uninstall("onnxruntime", "onnxruntime-gpu")
-                pip_install(ort,"--extra-index-url",extra_index_url)
+            cuda_major = int(str(cuda_version).split(".")[0])
+            # ORT 1.17.1 has no Python 3.13 wheel and no CUDA 13 build.
+            # onnxruntime-gpu >= 1.27 on PyPI is the CUDA 13 package.
+            modern_ort = cuda_major >= 13 or sys.version_info >= (3, 13)
+            if modern_ort:
+                if not is_installed("onnxruntime-gpu", "1.27.0", False):
+                    install_count += 1
+                    print("[ReActor] Installing onnxruntime-gpu>=1.27.0 for CUDA 13 / Python 3.13")
+                    pip_uninstall("onnxruntime", "onnxruntime-gpu")
+                    pip_install("onnxruntime-gpu>=1.27.0")
+            else:
+                if cuda_major >= 12: # CU12.x
+                    extra_index_url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
+                else: # CU11.8
+                    extra_index_url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple"
+                if not is_installed(ort,"1.17.1",True):
+                    install_count += 1
+                    ort = "onnxruntime-gpu==1.17.1"
+                    pip_uninstall("onnxruntime", "onnxruntime-gpu")
+                    pip_install(ort,"--extra-index-url",extra_index_url)
         elif not is_installed(ort,"1.18.1",False):
             install_count += 1
             pip_install(ort, "-U")
@@ -121,17 +144,30 @@ with open(req_file) as file:
         print(f"\nERROR: Failed to install {ort} - ReActor won't start")
         raise e
     # print(f"Device: {last_device}")
-    strict = True
     for package in file:
         package_version = None
+        strict = True
         try:
             package = package.strip()
+            if not package or package.startswith("#"):
+                continue
+            name = requirement_name(package)
             if "==" in package:
-                package_version = package.split('==')[1]
+                package_version = package.split('==', 1)[1].strip()
+                strict = True
             elif ">=" in package:
-                package_version = package.split('>=')[1]
+                package_version = package.split('>=', 1)[1].strip()
                 strict = False
-            if not is_installed(package,package_version,strict):
+            # insightface 0.7.3 does not publish a Python 3.13 wheel, and the
+            # source build fails on Forge Neo. InsightFace 2.x is the package
+            # that actually imports there.
+            if name == "insightface" and sys.version_info >= (3, 13):
+                if not is_installed("insightface", "2.0.0", False):
+                    install_count += 1
+                    print("[ReActor] Installing insightface>=2.1 for Python 3.13")
+                    pip_install("insightface>=2.1")
+                continue
+            if not is_installed(name, package_version, strict):
                 install_count += 1
                 pip_install(package)
         except Exception as e:
